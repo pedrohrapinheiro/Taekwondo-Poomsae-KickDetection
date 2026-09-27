@@ -21,10 +21,10 @@ model = YOLO("yolov8n-pose.pt")
 # FUNÇÕES
 # =========================
 
-def save_pose_to_csv(filename, video_name, keypoints, label):
+def save_pose_to_csv(filename, video_name, keypoints, deltas, label):
     """
-    Salva os keypoints no CSV.
-    Estrutura: timestamp, video_name, label, kp0_x, kp0_y, kp0_conf, ..., kp16_x, kp16_y, kp16_conf
+    Salva os keypoints e as variações (deltas) no CSV.
+    Estrutura: timestamp, video_name, label, kp0_x, kp0_y, kp0_conf, ..., delta_kp0_x, delta_kp0_y, ...
     """
     file_exists = os.path.isfile(filename)
 
@@ -34,14 +34,24 @@ def save_pose_to_csv(filename, video_name, keypoints, label):
         # Escreve o cabeçalho se o arquivo for novo
         if not file_exists:
             header = ['timestamp', 'video_name', 'label']
+            # Colunas de Posição
             for i in range(17):
                 header += [f'kp{i}_x', f'kp{i}_y', f'kp{i}_conf']
+            # Colunas de Movimento (Deltas)
+            for i in range(17):
+                header += [f'delta_kp{i}_x', f'delta_kp{i}_y']
             writer.writerow(header)
 
         # Prepara a linha
         row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), video_name, label]
+
+        # Adiciona posições atuais
         for kp in keypoints:
             row += list(kp)
+
+        # Adiciona deltas (movimento)
+        for d in deltas:
+            row += list(d)
 
         writer.writerow(row)
 
@@ -80,6 +90,9 @@ def process_videos():
         total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
         frame_count = 0
 
+        # Variável para armazenar os pontos do frame anterior (para calcular o delta)
+        prev_keypoints = None
+
         print(f"Processando: {video_file} | Label: {label} | Total Frames: {total_frames}")
 
         while True:
@@ -97,16 +110,31 @@ def process_videos():
                 xy = results[0].keypoints.xy[0].cpu().numpy()
                 conf = results[0].keypoints.conf[0].cpu().numpy()
 
-                person_keypoints = []
+                current_keypoints = []
                 for i in range(17):
-                    # Garante que pegamos x, y, conf mesmo se o modelo retornar menos
                     if i < len(xy):
-                        person_keypoints.append((xy[i][0], xy[i][1], conf[i]))
+                        current_keypoints.append((xy[i][0], xy[i][1], conf[i]))
                     else:
-                        person_keypoints.append((0, 0, 0))
+                        current_keypoints.append((0, 0, 0))
 
-                # Salva no CSV
-                save_pose_to_csv(OUTPUT_CSV, video_file, person_keypoints, label)
+                # Cálculo de Deltas (Movimento)
+                deltas = []
+                if prev_keypoints is not None:
+                    for i in range(17):
+                        # Delta X = x_atual - x_anterior
+                        # Delta Y = y_atual - y_anterior
+                        dx = current_keypoints[i][0] - prev_keypoints[i][0]
+                        dy = current_keypoints[i][1] - prev_keypoints[i][1]
+                        deltas.append((dx, dy))
+                else:
+                    # No primeiro frame, o delta é zero
+                    deltas = [(0, 0)] * 17
+
+                # Salva no CSV (Posição + Delta)
+                save_pose_to_csv(OUTPUT_CSV, video_file, current_keypoints, deltas, label)
+
+                # Atualiza o frame anterior para a próxima iteração
+                prev_keypoints = current_keypoints
 
             if frame_count % 100 == 0:
                 print(f"  -> Frame {frame_count}/{total_frames} processado...")
