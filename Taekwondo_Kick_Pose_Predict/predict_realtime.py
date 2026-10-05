@@ -67,11 +67,11 @@ WINDOW_SIZE = 30
 feature_buffer = deque(maxlen=WINDOW_SIZE)
 
 # Voting Buffer
-prediction_buffer = deque(maxlen=15)
+prediction_buffer = deque(maxlen=5) # Reduced from 15 to 5 for faster response
 prev_angles = None
 
 # Performance optimizations
-FRAME_SKIP = 5
+FRAME_SKIP = 2 # Reduced from 5 to 2 for more frequent AI updates
 frame_count = 0
 
 # Initialize Threaded Stream
@@ -95,8 +95,12 @@ while True:
 
             # Only focus on lower body points
             important_indices = [11, 12, 13, 14, 15, 16]
-            leg_confidences = [conf[i] if i < len(conf) else 0 for i in important_indices]
-            legs_visible = any(c > 0.5 for c in leg_confidences)
+            conf = results[0].keypoints.conf[0].cpu().numpy()
+
+            # STRICT VISIBILITY: Require Hips (11,12) AND at least one ankle (15 or 16)
+            hips_visible = conf[11] > 0.5 and conf[12] > 0.5
+            ankles_visible = conf[15] > 0.5 or conf[16] > 0.5
+            legs_visible = hips_visible and ankles_visible
 
             current_kp = []
             for i in range(17):
@@ -104,6 +108,7 @@ while True:
                     current_kp.append([xy[i][0], xy[i][1], conf[i]])
                 else:
                     current_kp.append([0, 0, 0])
+
 
             if not legs_visible:
                 label = 0
@@ -181,7 +186,7 @@ while True:
     # --- UI UPDATE ---
     if len(prediction_buffer) > 0:
         vote_score = sum(prediction_buffer) / len(prediction_buffer)
-        if vote_score > 0.85:
+        if vote_score > 0.6: # Lowered from 0.85 to 0.6 for faster trigger
             text, color = "KICKING!", (0, 255, 0)
         else:
             text, color = "NO KICK", (0, 0, 255)
