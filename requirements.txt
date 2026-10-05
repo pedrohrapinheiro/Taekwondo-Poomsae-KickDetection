@@ -1,0 +1,16 @@
+# Core Computer Vision & Pose Estimation
+ultralytics
+opencv-python
+cvzone
+
+# Data Processing & Machine Learning
+pandas
+numpy
+scikit-learn
+joblib
+
+# Deep Learning
+tensorflow
+
+# Notebooks
+jupyter
