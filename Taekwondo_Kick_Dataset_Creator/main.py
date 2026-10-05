@@ -27,34 +27,33 @@ model = YOLO(MODEL_PATH)
 
 def save_pose_to_csv(filename, video_name, frame_idx, keypoints, deltas, label):
     """
-    Salva os keypoints e as variações (deltas) no CSV.
-    Estrutura: timestamp, video_name, frame_idx, label, kp0_x, kp0_y, kp0_conf, ..., delta_kp0_x, delta_kp0_y, ...
+    Salva apenas os keypoints importantes (Hips, Knees, Ankles) no CSV.
+    Indices: 11, 12, 13, 14, 15, 16
     """
     file_exists = os.path.isfile(filename)
+    important_indices = [11, 12, 13, 14, 15, 16]
 
     with open(filename, mode='a', newline='') as f:
         writer = csv.writer(f)
 
-        # Escreve o cabeçalho se o arquivo for novo
         if not file_exists:
             header = ['timestamp', 'video_name', 'frame_idx', 'label']
-            # Colunas de Posição
-            for i in range(17):
-                header += [f'kp{i}_x', f'kp{i}_y', f'kp{i}_conf']
-            # Colunas de Movimento (Deltas)
-            for i in range(17):
-                header += [f'delta_kp{i}_x', f'delta_kp{i}_y']
+            for idx in important_indices:
+                header += [f'kp{idx}_x', f'kp{idx}_y', f'kp{idx}_conf']
+            for idx in important_indices:
+                header += [f'delta_kp{idx}_x', f'delta_kp{idx}_y']
             writer.writerow(header)
 
-        # Prepara a linha
         row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), video_name, frame_idx, label]
 
-        # Adiciona posições atuais
-        for kp in keypoints:
+        # Add only important positions
+        for idx in important_indices:
+            kp = keypoints[idx]
             row += list(kp)
 
-        # Adiciona deltas (movimento)
-        for d in deltas:
+        # Add only important deltas
+        for idx in important_indices:
+            d = deltas[idx]
             row += list(d)
 
         writer.writerow(row)
