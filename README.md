@@ -1,1 +1,0 @@
-# Taekwondo-Poomsae-KickDetection

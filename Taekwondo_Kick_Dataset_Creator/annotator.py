@@ -76,23 +76,31 @@ if __name__ == "__main__":
     # Get the directory where the script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
     video_folder = os.path.join(script_dir, "videos")
+    output_csv_path = os.path.join(script_dir, "annotations.csv")
 
     if not os.path.exists(video_folder):
         os.makedirs(video_folder)
         print(f"Created {video_folder} folder. Please add videos there.")
     else:
-        videos = [f for f in os.listdir(video_folder) if f.endswith(('.mp4', '.avi', '.mov'))]
-        if not videos:
-            print(f"No videos found in {video_folder}")
-        else:
+        while True:
+            videos = [f for f in os.listdir(video_folder) if f.endswith(('.mp4', '.avi', '.mov'))]
+            if not videos:
+                print(f"No videos found in {video_folder}")
+                break
+
+            print("\n--- Video Selection ---")
             print("Available videos:")
             for i, v in enumerate(videos):
                 print(f"{i}: {v}")
+            print("x: Exit program")
 
             try:
-                choice = int(input("Select video index to annotate: "))
-                # Ensure output_csv is also in the script directory
-                output_csv_path = os.path.join(script_dir, "annotations.csv")
+                user_input = input("Select video index to annotate (or 'x' to exit): ").strip().lower()
+                if user_input == 'x':
+                    print("Exiting annotator.")
+                    break
+
+                choice = int(user_input)
                 annotate_video(os.path.join(video_folder, videos[choice]), output_csv=output_csv_path)
             except (ValueError, IndexError):
-                print("Invalid selection.")
+                print("Invalid selection. Please try again.")

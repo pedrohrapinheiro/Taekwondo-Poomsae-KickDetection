@@ -9,10 +9,12 @@ from datetime import datetime
 # CONFIGURAÇÕES
 # =========================
 
+# Get the directory where the script is located
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Pasta onde estão os vídeos
-VIDEO_FOLDER = "videos"
+VIDEO_FOLDER = os.path.join(SCRIPT_DIR, "videos")
 # Nome do arquivo de saída
-OUTPUT_CSV = "poses_dataset_lstm.csv"
+OUTPUT_CSV = os.path.join(SCRIPT_DIR, "poses_dataset.csv")
 
 # Inicializa o modelo YOLO Pose
 model = YOLO("yolov8n-pose.pt")
@@ -21,10 +23,10 @@ model = YOLO("yolov8n-pose.pt")
 # FUNÇÕES
 # =========================
 
-def save_pose_to_csv(filename, video_name, keypoints, deltas, label):
+def save_pose_to_csv(filename, video_name, frame_idx, keypoints, deltas, label):
     """
     Salva os keypoints e as variações (deltas) no CSV.
-    Estrutura: timestamp, video_name, label, kp0_x, kp0_y, kp0_conf, ..., delta_kp0_x, delta_kp0_y, ...
+    Estrutura: timestamp, video_name, frame_idx, label, kp0_x, kp0_y, kp0_conf, ..., delta_kp0_x, delta_kp0_y, ...
     """
     file_exists = os.path.isfile(filename)
 
@@ -33,7 +35,7 @@ def save_pose_to_csv(filename, video_name, keypoints, deltas, label):
 
         # Escreve o cabeçalho se o arquivo for novo
         if not file_exists:
-            header = ['timestamp', 'video_name', 'label']
+            header = ['timestamp', 'video_name', 'frame_idx', 'label']
             # Colunas de Posição
             for i in range(17):
                 header += [f'kp{i}_x', f'kp{i}_y', f'kp{i}_conf']
@@ -43,7 +45,7 @@ def save_pose_to_csv(filename, video_name, keypoints, deltas, label):
             writer.writerow(header)
 
         # Prepara a linha
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), video_name, label]
+        row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), video_name, frame_idx, label]
 
         # Adiciona posições atuais
         for kp in keypoints:
@@ -65,6 +67,23 @@ def process_videos():
         print(f"Erro: A pasta '{VIDEO_FOLDER}' não foi encontrada.")
         return
 
+    # Carrega anotações de chutes
+    annotations = {}
+    ANNOTATIONS_FILE = os.path.join(SCRIPT_DIR, "annotations.csv")
+    if os.path.exists(ANNOTATIONS_FILE):
+        with open(ANNOTATIONS_FILE, mode='r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                video = row['video']
+                start = int(row['start_frame'])
+                end = int(row['end_frame'])
+                if video not in annotations:
+                    annotations[video] = []
+                annotations[video].append((start, end))
+        print(f"Anotações carregadas de {ANNOTATIONS_FILE}")
+    else:
+        print(f"Aviso: {ANNOTATIONS_FILE} não encontrado. Todos os frames serão label 0.")
+
     # Lista todos os arquivos na pasta
     files = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(('.mp4', '.avi', '.mov', '.mkv'))]
 
@@ -75,15 +94,6 @@ def process_videos():
     print(f"Encontrados {len(files)} vídeos. Iniciando processamento...")
 
     for video_file in files:
-        # Determina o label com base no prefixo do nome do arquivo
-        if video_file.startswith("kick_"):
-            label = 1
-        elif video_file.startswith("no_kick_"):
-            label = 0
-        else:
-            print(f"Pulando arquivo {video_file} (não começa com 'kick_' ou 'no_kick_')")
-            continue
-
         video_path = os.path.join(VIDEO_FOLDER, video_file)
         cap = cv.VideoCapture(video_path)
 
@@ -93,7 +103,7 @@ def process_videos():
         # Variável para armazenar os pontos do frame anterior (para calcular o delta)
         prev_keypoints = None
 
-        print(f"Processando: {video_file} | Label: {label} | Total Frames: {total_frames}")
+        print(f"Processando: {video_file} | Total Frames: {total_frames}")
 
         while True:
             ret, frame = cap.read()
@@ -101,6 +111,14 @@ def process_videos():
                 break
 
             frame_count += 1
+
+            # Determina o label por frame
+            label = 0
+            if video_file in annotations:
+                for start, end in annotations[video_file]:
+                    if start <= frame_count <= end:
+                        label = 1
+                        break
 
             # Inferência YOLO
             results = model(frame, verbose=False)
@@ -131,7 +149,7 @@ def process_videos():
                     deltas = [(0, 0)] * 17
 
                 # Salva no CSV (Posição + Delta)
-                save_pose_to_csv(OUTPUT_CSV, video_file, current_keypoints, deltas, label)
+                save_pose_to_csv(OUTPUT_CSV, video_file, frame_count, current_keypoints, deltas, label)
 
                 # Atualiza o frame anterior para a próxima iteração
                 prev_keypoints = current_keypoints
