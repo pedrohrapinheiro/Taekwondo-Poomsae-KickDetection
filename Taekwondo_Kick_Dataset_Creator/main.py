@@ -15,9 +15,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEO_FOLDER = os.path.join(SCRIPT_DIR, "videos")
 # Nome do arquivo de saída
 OUTPUT_CSV = os.path.join(SCRIPT_DIR, "poses_dataset.csv")
+# Caminho para o modelo local
+MODEL_PATH = os.path.join(SCRIPT_DIR, "yolov8n-pose.pt")
 
-# Inicializa o modelo YOLO Pose
-model = YOLO("yolov8n-pose.pt")
+# Inicializa o modelo YOLO Pose usando o arquivo local
+model = YOLO(MODEL_PATH)
 
 # =========================
 # FUNÇÕES
@@ -74,15 +76,16 @@ def process_videos():
         with open(ANNOTATIONS_FILE, mode='r') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                video = row['video']
+                video = row['video'].strip()
                 start = int(row['start_frame'])
                 end = int(row['end_frame'])
                 if video not in annotations:
                     annotations[video] = []
                 annotations[video].append((start, end))
-        print(f"Anotações carregadas de {ANNOTATIONS_FILE}")
+        print(f"Anotações carregadas de {ANNOTATIONS_FILE}. Vídeos anotados: {list(annotations.keys())}")
     else:
         print(f"Aviso: {ANNOTATIONS_FILE} não encontrado. Todos os frames serão label 0.")
+
 
     # Lista todos os arquivos na pasta
     files = [f for f in os.listdir(VIDEO_FOLDER) if f.endswith(('.mp4', '.avi', '.mov', '.mkv'))]
@@ -103,7 +106,9 @@ def process_videos():
         # Variável para armazenar os pontos do frame anterior (para calcular o delta)
         prev_keypoints = None
 
-        print(f"Processando: {video_file} | Total Frames: {total_frames}")
+        # Debug: Verifica se este vídeo tem anotações
+        has_annotations = video_file in annotations
+        print(f"Processando: {video_file} | Total Frames: {total_frames} | Tem Anotações: {has_annotations}")
 
         while True:
             ret, frame = cap.read()
@@ -114,7 +119,7 @@ def process_videos():
 
             # Determina o label por frame
             label = 0
-            if video_file in annotations:
+            if has_annotations:
                 for start, end in annotations[video_file]:
                     if start <= frame_count <= end:
                         label = 1
@@ -122,6 +127,7 @@ def process_videos():
 
             # Inferência YOLO
             results = model(frame, verbose=False)
+
 
             # Extração de Keypoints (apenas a primeira pessoa detectada)
             if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
