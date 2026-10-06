@@ -1,9 +1,9 @@
-# Taekwondo Poomsae Kick Detection 🥋
+# Taekwondo Kick Detection 🥋
 
-An AI-powered system designed to detect and classify Taekwondo kicks in real-time using computer vision and deep learning. This project transforms raw video feeds into skeletal keypoints and uses a temporal Neural Network to identify the specific dynamics of a kick.
+An AI-powered system designed to detect whether a Taekwondo kick is happening in real-time using computer vision and deep learning. This project transforms raw video feeds into skeletal keypoints and uses a temporal Neural Network to classify movements as either "Kicking" or "No Kick".
 
 ## 🚀 Features
-- **Real-time Detection**: Analyzes live camera feeds to identify kicks.
+- **Real-time Binary Detection**: Identifies if a kick is currently being executed.
 - **Skeletal Tracking**: Uses YOLOv8-Pose for high-accuracy human pose estimation.
 - **Temporal Analysis**: Implements a sliding window approach to analyze movement over time rather than single frames.
 - **Research-Grounded**: Methodology aligned with Human Activity Recognition (HAR) research (Haider et al., 2023), utilizing hip-centered normalization and joint angle dynamics.
