@@ -7,8 +7,9 @@ import joblib
 import os
 import threading
 import warnings
+import time
 
-# Silenciar avisos do TensorFlow e sklearn para limpar o terminal
+# Silenciar avisos do TensorFlow e sklearn
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -18,8 +19,6 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class VideoStream:
     def __init__(self, src=0):
         self.stream = cv.VideoCapture(src)
-        self.stream.set(cv.CAP_PROP_FRAME_WIDTH, 320)
-        self.stream.set(cv.CAP_PROP_FRAME_HEIGHT, 240)
         (self.grabbed, self.frame) = self.stream.read()
         self.stopped = False
 
@@ -40,164 +39,133 @@ class VideoStream:
         self.stream.release()
 
 # ==========================================
-# 1. GEOMETRY UTILS
+# 1. POLAR GEOMETRY UTILS
 # ==========================================
 def calculate_angle(a, b, c):
-    """Calcula o ângulo em graus entre três pontos (a, b, c) onde b é o vértice."""
-    a, b, c = np.array(a), np.array(b), np.array(c)
-    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-    angle = np.abs(radians * 180.0 / np.pi)
-    return 360 - angle if angle > 180.0 else angle
+    ba = np.array(a) - np.array(b)
+    bc = np.array(c) - np.array(b)
+    norm_ba = np.linalg.norm(ba)
+    norm_bc = np.linalg.norm(bc)
+    if norm_ba == 0 or norm_bc == 0: return 0.0
+    cosine_angle = np.dot(ba, bc) / (norm_ba * norm_bc)
+    return np.degrees(np.arccos(np.clip(cosine_angle, -1.0, 1.0)))
+
+def get_normalized_distance(p1, p2, ref_dist):
+    dist = np.linalg.norm(np.array(p1) - np.array(p2))
+    return dist / ref_dist if ref_dist != 0 else 0.0
 
 # ==========================================
-# 2. LOAD MODELS AND ASSETS
+# 2. AI PROCESSOR THREAD
+# ==========================================
+class AIProcessor(threading.Thread):
+    def __init__(self, vs, pose_model, kick_model, scaler):
+        super().__init__(daemon=True)
+        self.vs = vs
+        self.pose_model = pose_model
+        self.kick_model = kick_model
+        self.scaler = scaler
+
+        self.WINDOW_SIZE = 20 # Janela menor para resposta mais rápida
+        self.feature_buffer = deque(maxlen=self.WINDOW_SIZE)
+        self.prediction_buffer = deque(maxlen=3) # Votação curta para estabilidade instantânea
+
+        self.lock = threading.Lock()
+        self.current_status = "Analyzing..."
+        self.current_color = (255, 255, 255)
+        self.stopped = False
+
+    def run(self):
+        print("AI Processor Thread started.")
+        while not self.stopped:
+            frame = self.vs.read()
+            if frame is None: continue
+
+            results = self.pose_model(frame, verbose=False)
+
+            if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
+                xy = results[0].keypoints.xy[0].cpu().numpy()
+                conf = results[0].keypoints.conf[0].cpu().numpy()
+
+                # Visibilidade Flexível
+                hips_visible = conf[11] > 0.3 and conf[12] > 0.3
+                ankles_visible = conf[15] > 0.3 or conf[16] > 0.3
+                legs_visible = hips_visible and ankles_visible
+
+                if not legs_visible:
+                    if time.time() % 5 < 0.1:
+                        print("Debug: Visibilidade insuficiente (Quadris ou Tornozelos ausentes)")
+                    current_label = 0
+                else:
+                    try:
+                        pts = {i: (xy[i][0], xy[i][1]) for i in range(17)}
+                        f_list = [
+                            calculate_angle(pts[11], pts[13], pts[15]),
+                            calculate_angle(pts[12], pts[14], pts[16]),
+                            calculate_angle(pts[5], pts[11], pts[13]),
+                            calculate_angle(pts[6], pts[12], pts[14]),
+                        ]
+                        ref_dist = np.linalg.norm(np.array(pts[11]) - np.array(pts[12]))
+                        f_list.append(get_normalized_distance(pts[11], pts[15], ref_dist))
+                        f_list.append(get_normalized_distance(pts[12], pts[16], ref_dist))
+
+                        self.feature_buffer.append(np.array(f_list))
+
+                        if len(self.feature_buffer) == self.WINDOW_SIZE:
+                            window = np.array(self.feature_buffer).reshape(1, self.WINDOW_SIZE, -1)
+                            window_res = window.reshape(-1, window.shape[-1])
+                            scaled = self.scaler.transform(window_res).reshape(1, self.WINDOW_SIZE, -1)
+                            prob = self.kick_model(scaled, training=False).numpy()[0][0]
+
+                            print(f"DEBUG: Probabilidade de Chute: {prob:.4f}")
+                            current_label = 1 if prob > 0.5 else 0
+                        else:
+                            current_label = 0
+                    except Exception as e:
+                        print(f"AI Error: {e}")
+                        current_label = 0
+
+                self.prediction_buffer.append(current_label)
+
+            # Votação para definir o status final
+            with self.lock:
+                if len(self.prediction_buffer) > 0:
+                    vote_score = sum(self.prediction_buffer) / len(self.prediction_buffer)
+                    if vote_score > 0.6:
+                        self.current_status, self.current_color = "KICKING!", (0, 255, 0)
+                    else:
+                        self.current_status, self.current_color = "NO KICK", (0, 0, 255)
+                else:
+                    self.current_status, self.current_color = "Analyzing...", (255, 255, 255)
+
+# ==========================================
+# 3. MAIN EXECUTION
 # ==========================================
 print("Loading models... please wait.")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-POSE_MODEL_PATH = os.path.join(SCRIPT_DIR, "yolov8n-pose.pt")
-KICK_MODEL_PATH = os.path.join(SCRIPT_DIR, "model", "kick_detection_model.h5")
-SCALER_PATH = os.path.join(SCRIPT_DIR, "model", "scaler.pkl")
+pose_model = YOLO(os.path.join(SCRIPT_DIR, "yolov8n-pose.pt"))
+kick_model = tf.keras.models.load_model(os.path.join(SCRIPT_DIR, "model", "kick_detection_model.h5"))
+scaler = joblib.load(os.path.join(SCRIPT_DIR, "model", "scaler.pkl"))
 
-pose_model = YOLO(POSE_MODEL_PATH)
-kick_model = tf.keras.models.load_model(KICK_MODEL_PATH)
-scaler = joblib.load(SCALER_PATH)
-
-# --- TEMPORAL BUFFER FOR MLP ---
-WINDOW_SIZE = 30
-feature_buffer = deque(maxlen=WINDOW_SIZE)
-
-# Voting Buffer
-prediction_buffer = deque(maxlen=5) # Reduced from 15 to 5 for faster response
-prev_angles = None
-
-# Performance optimizations
-FRAME_SKIP = 2 # Reduced from 5 to 2 for more frequent AI updates
-frame_count = 0
-
-# Initialize Threaded Stream
 vs = VideoStream(src=0).start()
+ai_thread = AIProcessor(vs, pose_model, kick_model, scaler)
+ai_thread.start()
 
 print("System Ready! Press 'q' to quit.")
 
 while True:
     frame = vs.read()
-    if frame is None:
-        break
+    if frame is None: break
 
-    frame_count += 1
-
-    if frame_count % FRAME_SKIP == 0:
-        results = pose_model(frame, verbose=False)
-
-        if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-            xy = results[0].keypoints.xy[0].cpu().numpy()
-            conf = results[0].keypoints.conf[0].cpu().numpy()
-
-            # Only focus on lower body points
-            important_indices = [11, 12, 13, 14, 15, 16]
-            conf = results[0].keypoints.conf[0].cpu().numpy()
-
-            # STRICT VISIBILITY: Require Hips (11,12) AND at least one ankle (15 or 16)
-            hips_visible = conf[11] > 0.5 and conf[12] > 0.5
-            ankles_visible = conf[15] > 0.5 or conf[16] > 0.5
-            legs_visible = hips_visible and ankles_visible
-
-            current_kp = []
-            for i in range(17):
-                if i < len(xy):
-                    current_kp.append([xy[i][0], xy[i][1], conf[i]])
-                else:
-                    current_kp.append([0, 0, 0])
-
-
-            if not legs_visible:
-                label = 0
-            else:
-                try:
-                    # 1. Normalize based on Hip Center
-                    hip_center = np.array([
-                        (current_kp[11][0] + current_kp[12][0]) / 2,
-                        (current_kp[11][1] + current_kp[12][1]) / 2
-                    ])
-
-                    # 2. Extract Relative Coordinates for LOWER BODY ONLY (6 points * 2 = 12 features)
-                    relative_coords = []
-                    for idx in important_indices:
-                        px = current_kp[idx][0] - hip_center[0]
-                        py = current_kp[idx][1] - hip_center[1]
-                        relative_coords.extend([px, py])
-
-                    # 3. Calculate Angles
-                    angle_knee_l = calculate_angle([current_kp[11][0], current_kp[11][1]], [current_kp[13][0], current_kp[13][1]], [current_kp[15][0], current_kp[15][1]])
-                    angle_knee_r = calculate_angle([current_kp[12][0], current_kp[12][1]], [current_kp[14][0], current_kp[14][1]], [current_kp[16][0], current_kp[16][1]])
-                    angle_hip_l = calculate_angle([current_kp[5][0], current_kp[5][1]], [current_kp[11][0], current_kp[11][1]], [current_kp[13][0], current_kp[13][1]])
-                    angle_hip_r = calculate_angle([current_kp[6][0], current_kp[6][1]], [current_kp[12][0], current_kp[12][1]], [current_kp[14][0], current_kp[14][1]])
-
-                    current_angles = np.array([angle_knee_l, angle_knee_r, angle_hip_l, angle_hip_r])
-
-                    if prev_angles is not None:
-                        angle_deltas = current_angles - prev_angles
-                    else:
-                        angle_deltas = np.zeros(4)
-
-                    prev_angles = current_angles
-
-                    # 4. Distances
-                    dist_foot_l = np.linalg.norm(np.array([current_kp[15][0], current_kp[15][1]]) - hip_center)
-                    dist_foot_r = np.linalg.norm(np.array([current_kp[16][0], current_kp[16][1]]) - hip_center)
-
-                    # FINAL FEATURE VECTOR PER FRAME (12 relative + 4 angles + 2 dist = 18 features)
-                    current_frame_features = relative_coords + [
-                        angle_knee_l, angle_knee_r, angle_hip_l, angle_hip_r,
-                        dist_foot_l, dist_foot_r
-                    ]
-
-                    # --- TEMPORAL WINDOW PREDICTION ---
-                    feature_buffer.append(current_frame_features)
-
-                    if len(feature_buffer) == WINDOW_SIZE:
-                        # Flatten buffer: (30, 18) -> (1, 540)
-                        window_data = np.array(feature_buffer).flatten().reshape(1, -1)
-
-                        try:
-                            scaled_features = scaler.transform(window_data)
-                            prediction_prob = kick_model(scaled_features, training=False).numpy()[0][0]
-                        except Exception as e:
-                            print(f"Scaling/Prediction Error: {e}")
-                            prediction_prob = 0.0
-                    else:
-                        prediction_prob = 0.0
-
-                    # Rule-based filter: Must have some angular velocity
-                    total_angular_velocity = np.sum(np.abs(angle_deltas))
-                    if total_angular_velocity < 3:
-                        label = 0
-                    else:
-                        label = 1 if prediction_prob > 0.8 else 0
-
-                except Exception as e:
-                    print(f"Error in prediction loop: {e}")
-                    label = 0
-
-            prediction_buffer.append(label)
-        else:
-            prediction_buffer.append(0)
-
-    # --- UI UPDATE ---
-    if len(prediction_buffer) > 0:
-        vote_score = sum(prediction_buffer) / len(prediction_buffer)
-        if vote_score > 0.6: # Lowered from 0.85 to 0.6 for faster trigger
-            text, color = "KICKING!", (0, 255, 0)
-        else:
-            text, color = "NO KICK", (0, 0, 255)
-    else:
-        text, color = "Analyzing...", (255, 255, 255)
+    with ai_thread.lock:
+        text = ai_thread.current_status
+        color = ai_thread.current_color
 
     cv.putText(frame, f"Status: {text}", (20, 40), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-    cv.imshow('Taekwondo Kick Detection - Realtime', frame)
+    cv.imshow('Taekwondo Kick Detection - Polar LSTM', frame)
 
     if cv.waitKey(1) & 0xFF == ord('q'):
         break
 
+ai_thread.stopped = True
 vs.stop()
 cv.destroyAllWindows()

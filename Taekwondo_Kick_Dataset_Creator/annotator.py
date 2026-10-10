@@ -33,6 +33,16 @@ def annotate_video(video_path, output_csv="annotations.csv"):
 
         # Add overlay info
         display_frame = frame.copy()
+        h, w = display_frame.shape[:2]
+
+        # Redimensionar para caber na tela sem cortar (mantendo proporção)
+        max_h, max_w = 800, 1200
+        scale = min(max_w/w, max_h/h)
+        if scale < 1.0:
+            new_w, new_h = int(w * scale), int(h * scale)
+            display_frame = cv.resize(display_frame, (new_w, new_h))
+            h, w = new_h, new_w
+
         cv.putText(display_frame, f"Frame: {frame_idx}/{total_frames}", (10, 30),
                    cv.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv.putText(display_frame, f"Start: {current_start if current_start is not None else 'None'}", (10, 60),
