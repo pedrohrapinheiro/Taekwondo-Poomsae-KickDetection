@@ -113,8 +113,19 @@ def process_videos():
             reader = csv.DictReader(f)
             for row in reader:
                 video = row['video'].strip()
-                start = int(row['start_frame'])
-                end = int(row['end_frame'])
+                start_val = row['start_frame'].strip()
+                end_val = row['end_frame'].strip()
+
+                if not video or not start_val or not end_val:
+                    continue
+
+                try:
+                    start = int(start_val)
+                    end = int(end_val)
+                except ValueError:
+                    print(f"Aviso: Pulando linha com valores inválidos: {row}")
+                    continue
+
                 if video not in annotations:
                     annotations[video] = []
                 annotations[video].append((start, end))
