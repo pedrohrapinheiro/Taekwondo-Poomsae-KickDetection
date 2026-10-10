@@ -4,6 +4,12 @@ from ultralytics import YOLO
 import csv
 import os
 from datetime import datetime
+import sys
+
+# Adicionar a raiz do projeto ao path para importar o core
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from core.geometry import calculate_angle, get_normalized_distance
+from core.pose_engine import PoseEngine
 
 # =========================
 # CONFIGURAÇÕES
@@ -63,21 +69,8 @@ def save_polar_pose_to_csv(filename, video_name, frame_idx, keypoints, label):
     # Extração de pontos (apenas x, y)
     pts = {i: (keypoints[i][0], keypoints[i][1]) for i in range(17)}
 
-    # 1. Cálculo de Ângulos (Invariantes à distância)
-    # Joelhos: Quadril -> Joelho -> Tornozelo
-    angle_knee_l = calculate_angle(pts[11], pts[13], pts[15])
-    angle_knee_r = calculate_angle(pts[12], pts[14], pts[16])
-    # Quadris: Ombro(5/6) -> Quadril -> Joelho
-    angle_hip_l = calculate_angle(pts[5], pts[11], pts[13])
-    angle_hip_r = calculate_angle(pts[6], pts[12], pts[14])
-
-    # 2. Normalização de Distância (Invariante à escala)
-    # Referência: Distância entre os quadris (Hip width)
-    ref_dist = np.linalg.norm(np.array(pts[11]) - np.array(pts[12]))
-
-    # Distâncias normalizadas (Ex: Quadril para Tornozelo)
-    dist_hip_ankle_l = get_normalized_distance(pts[11], pts[15], ref_dist)
-    dist_hip_ankle_r = get_normalized_distance(pts[12], pts[16], ref_dist)
+    # Utiliza o PoseEngine do core para extrair features e a distância de referência
+    features, ref_dist = PoseEngine.extract_polar_features(pts)
 
     with open(filename, mode='a', newline='') as f:
         writer = csv.writer(f)
@@ -92,8 +85,8 @@ def save_polar_pose_to_csv(filename, video_name, frame_idx, keypoints, label):
         row = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             video_name, frame_idx, label,
-            angle_knee_l, angle_knee_r, angle_hip_l, angle_hip_r,
-            dist_hip_ankle_l, dist_hip_ankle_r
+            features[0], features[1], features[2], features[3],
+            features[4], features[5]
         ]
         writer.writerow(row)
 
