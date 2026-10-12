@@ -8,7 +8,6 @@ import sys
 
 # Adicionar a raiz do projeto ao path para importar o core
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from core.geometry import calculate_angle, get_normalized_distance
 from core.pose_engine import PoseEngine
 
 # =========================
@@ -21,42 +20,6 @@ OUTPUT_CSV = os.path.join(SCRIPT_DIR, "poses_dataset_polar.csv")
 MODEL_PATH = os.path.join(SCRIPT_DIR, "yolov8n-pose.pt")
 
 model = YOLO(MODEL_PATH)
-
-# =========================
-# FUNÇÕES MATEMÁTICAS (POLAR & INVARIÂNCIA)
-# =========================
-
-def calculate_angle(a, b, c):
-    """
-    Calcula o ângulo em graus no ponto b dado os pontos a e c.
-    Utiliza o produto escalar para garantir invariância de escala.
-    """
-    # Filtro de confiança: se qualquer ponto for (0,0), retorna 0
-    if np.all(a == 0) or np.all(b == 0) or np.all(c == 0):
-        return 0.0
-
-    ba = np.array(a) - np.array(b)
-    bc = np.array(c) - np.array(b)
-
-    norm_ba = np.linalg.norm(ba)
-    norm_bc = np.linalg.norm(bc)
-
-    if norm_ba == 0 or norm_bc == 0:
-        return 0.0
-
-    cosine_angle = np.dot(ba, bc) / (norm_ba * norm_bc)
-    angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
-    return np.degrees(angle)
-
-def get_normalized_distance(p1, p2, ref_dist):
-    """
-    Calcula a distância entre p1 e p2 normalizada por uma distância de referência.
-    Isso resolve o problema de se afastar da câmera.
-    """
-    dist = np.linalg.norm(np.array(p1) - np.array(p2))
-    if ref_dist == 0:
-        return 0.0
-    return dist / ref_dist
 
 def save_polar_pose_to_csv(filename, video_name, frame_idx, keypoints, label):
     """
@@ -131,6 +94,10 @@ def process_videos():
         print("Nenhum arquivo de vídeo encontrado.")
         return
 
+    # Recria o CSV do zero: anexar a um arquivo antigo misturaria features/labels de execuções diferentes
+    if os.path.exists(OUTPUT_CSV):
+        os.remove(OUTPUT_CSV)
+
     print(f"Iniciando processamento polar de {len(files)} vídeos...")
 
     for video_file in files:
@@ -143,19 +110,22 @@ def process_videos():
         while True:
             ret, frame = cap.read()
             if not ret: break
+            # Índice 0-based, igual ao annotator.py
+            frame_idx = frame_count
             frame_count += 1
 
             label = 0
             if has_annotations:
                 for start, end in annotations[video_file]:
-                    if start <= frame_count <= end:
+                    if start <= frame_idx <= end:
                         label = 1
                         break
 
             results = model(frame, verbose=False)
             if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-                xy = results[0].keypoints.xy[0].cpu().numpy()
-                conf = results[0].keypoints.conf[0].cpu().numpy()
+                person = PoseEngine.select_main_person(results[0])
+                xy = results[0].keypoints.xy[person].cpu().numpy()
+                conf = results[0].keypoints.conf[person].cpu().numpy()
 
                 current_keypoints = []
                 for i in range(17):
@@ -164,7 +134,7 @@ def process_videos():
                     else:
                         current_keypoints.append((0, 0, 0))
 
-                save_polar_pose_to_csv(OUTPUT_CSV, video_file, frame_count, current_keypoints, label)
+                save_polar_pose_to_csv(OUTPUT_CSV, video_file, frame_idx, current_keypoints, label)
 
             if frame_count % 100 == 0:
                 print(f"  -> {video_file}: Frame {frame_count}/{total_frames}")

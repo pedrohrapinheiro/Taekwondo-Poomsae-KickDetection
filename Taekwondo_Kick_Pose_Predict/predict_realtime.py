@@ -25,6 +25,7 @@ class VideoStream:
     def __init__(self, src=0):
         self.stream = cv.VideoCapture(src)
         (self.grabbed, self.frame) = self.stream.read()
+        self.frame_id = 0
         self.stopped = False
 
     def start(self):
@@ -35,9 +36,13 @@ class VideoStream:
     def update(self):
         while not self.stopped:
             (self.grabbed, self.frame) = self.stream.read()
+            self.frame_id += 1
 
     def read(self):
         return self.frame
+
+    def read_with_id(self):
+        return self.frame, self.frame_id
 
     def stop(self):
         self.stopped = True
@@ -54,7 +59,8 @@ class AIProcessor(threading.Thread):
         self.kick_model = kick_model
         self.scaler = scaler
 
-        self.WINDOW_SIZE = 20
+        # Deve ser igual ao WINDOW_SIZE usado no treino (model.ipynb)
+        self.WINDOW_SIZE = 30
         self.feature_buffer = deque(maxlen=self.WINDOW_SIZE)
         self.prediction_buffer = deque(maxlen=3)
 
@@ -67,19 +73,25 @@ class AIProcessor(threading.Thread):
         self.current_status = "Analyzing..."
         self.current_color = (255, 255, 255)
         self.current_speed = 0.0
+        self.last_frame_id = -1
         self.stopped = False
 
     def run(self):
         print("AI Processor Thread started.")
         while not self.stopped:
-            frame = self.vs.read()
-            if frame is None: continue
+            frame, frame_id = self.vs.read_with_id()
+            # Não processar o mesmo frame duas vezes (duplicaria passos na janela temporal)
+            if frame is None or frame_id == self.last_frame_id:
+                time.sleep(0.001)
+                continue
+            self.last_frame_id = frame_id
 
             results = self.pose_model(frame, verbose=False)
 
             if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-                xy = results[0].keypoints.xy[0].cpu().numpy()
-                conf = results[0].keypoints.conf[0].cpu().numpy()
+                person = PoseEngine.select_main_person(results[0])
+                xy = results[0].keypoints.xy[person].cpu().numpy()
+                conf = results[0].keypoints.conf[person].cpu().numpy()
 
                 hips_visible = conf[11] > 0.3 and conf[12] > 0.3
                 ankles_visible = conf[15] > 0.3 or conf[16] > 0.3
@@ -88,6 +100,9 @@ class AIProcessor(threading.Thread):
                 if not legs_visible:
                     current_label = 0
                     avg_speed = 0.0
+                    # A janela precisa de frames consecutivos: descarta a sequência interrompida
+                    self.feature_buffer.clear()
+                    self.prev_ankles = None
                     with self.lock:
                         self.current_speed = 0.0
                 else:

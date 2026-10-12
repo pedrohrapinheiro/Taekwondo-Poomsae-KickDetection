@@ -1,15 +1,20 @@
 import numpy as np
 
+def is_missing(p):
+    """Keypoints não detectados pelo YOLO chegam como (0, 0)."""
+    return np.allclose(np.asarray(p, dtype=float), 0)
+
 def calculate_angle(a, b, c):
     """
     Calcula o ângulo em graus no ponto b dado os pontos a e c.
     Utiliza o produto escalar para garantir invariância de escala.
     """
-    if np.all(a == 0) or np.all(b == 0) or np.all(c == 0):
+    a, b, c = np.asarray(a, dtype=float), np.asarray(b, dtype=float), np.asarray(c, dtype=float)
+    if is_missing(a) or is_missing(b) or is_missing(c):
         return 0.0
 
-    ba = np.array(a) - np.array(b)
-    bc = np.array(c) - np.array(b)
+    ba = a - b
+    bc = c - b
 
     norm_ba = np.linalg.norm(ba)
     norm_bc = np.linalg.norm(bc)
@@ -25,6 +30,8 @@ def get_normalized_distance(p1, p2, ref_dist):
     """
     Calcula a distância entre p1 e p2 normalizada por uma distância de referência.
     """
+    if is_missing(p1) or is_missing(p2):
+        return 0.0
     dist = np.linalg.norm(np.array(p1) - np.array(p2))
     if ref_dist == 0:
         return 0.0
