@@ -12,7 +12,7 @@ import sys
 
 # Adicionar a raiz do projeto ao path para importar o core
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from core.pose_engine import PoseEngine
+from core.pose_engine import PoseEngine, PoseDetector
 
 # Silenciar avisos do TensorFlow e sklearn
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -56,6 +56,7 @@ class AIProcessor(threading.Thread):
         super().__init__(daemon=True)
         self.vs = vs
         self.pose_model = pose_model
+        self.detector = PoseDetector(pose_model)
         self.kick_model = kick_model
         self.scaler = scaler
 
@@ -86,12 +87,10 @@ class AIProcessor(threading.Thread):
                 continue
             self.last_frame_id = frame_id
 
-            results = self.pose_model(frame, verbose=False)
+            detection = self.detector.detect(frame)
 
-            if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-                person = PoseEngine.select_main_person(results[0])
-                xy = results[0].keypoints.xy[person].cpu().numpy()
-                conf = results[0].keypoints.conf[person].cpu().numpy()
+            if detection is not None:
+                xy, conf = detection
 
                 hips_visible = conf[11] > 0.3 and conf[12] > 0.3
                 ankles_visible = conf[15] > 0.3 or conf[16] > 0.3

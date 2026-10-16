@@ -8,7 +8,7 @@ import sys
 
 # Adicionar a raiz do projeto ao path para importar o core
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from core.pose_engine import PoseEngine
+from core.pose_engine import PoseEngine, PoseDetector
 
 # =========================
 # CONFIGURAÇÕES
@@ -20,6 +20,7 @@ OUTPUT_CSV = os.path.join(SCRIPT_DIR, "poses_dataset_polar.csv")
 MODEL_PATH = os.path.join(SCRIPT_DIR, "yolov8n-pose.pt")
 
 model = YOLO(MODEL_PATH)
+detector = PoseDetector(model)
 
 def save_polar_pose_to_csv(filename, video_name, frame_idx, keypoints, label):
     """
@@ -106,6 +107,7 @@ def process_videos():
         total_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
         frame_count = 0
         has_annotations = video_file in annotations
+        detector.reset()
 
         while True:
             ret, frame = cap.read()
@@ -121,11 +123,9 @@ def process_videos():
                         label = 1
                         break
 
-            results = model(frame, verbose=False)
-            if results[0].keypoints is not None and len(results[0].keypoints.xy) > 0:
-                person = PoseEngine.select_main_person(results[0])
-                xy = results[0].keypoints.xy[person].cpu().numpy()
-                conf = results[0].keypoints.conf[person].cpu().numpy()
+            detection = detector.detect(frame)
+            if detection is not None:
+                xy, conf = detection
 
                 current_keypoints = []
                 for i in range(17):
