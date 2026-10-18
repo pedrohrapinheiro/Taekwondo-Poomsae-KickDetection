@@ -62,8 +62,16 @@ class AIProcessor(threading.Thread):
 
         # Deve ser igual ao WINDOW_SIZE usado no treino (model.ipynb)
         self.WINDOW_SIZE = 30
-        self.feature_buffer = deque(maxlen=self.WINDOW_SIZE)
-        self.prediction_buffer = deque(maxlen=3)
+        # FPS dos vídeos de treino: a janela é reamostrada para este ritmo, então ela sempre
+        # cobre ~1 s de movimento, independente de quantos frames por segundo o loop consegue processar
+        self.TRAIN_FPS = 30.0
+        self.feature_buffer = deque(maxlen=self.WINDOW_SIZE * 4)  # (timestamp, features)
+
+        # Chamar o modelo Keras direto (eager) custa ~150-200 ms por frame; compilado custa ~2 ms
+        self.predict_fn = tf.function(
+            lambda x: self.kick_model(x, training=False),
+            input_signature=[tf.TensorSpec((1, self.WINDOW_SIZE, 6), tf.float32)])
+        self.predict_fn(tf.zeros((1, self.WINDOW_SIZE, 6)))  # compila agora, não no primeiro chute
 
         # SPEED TRACKING
         self.prev_ankles = None
@@ -74,8 +82,19 @@ class AIProcessor(threading.Thread):
         self.current_status = "Analyzing..."
         self.current_color = (255, 255, 255)
         self.current_speed = 0.0
+        self.current_label = None  # None = janela ainda incompleta
         self.last_frame_id = -1
         self.stopped = False
+
+    def _resampled_window(self):
+        """Janela de WINDOW_SIZE passos a TRAIN_FPS terminando no frame mais recente (interpolação linear)."""
+        times = np.array([t for t, _ in self.feature_buffer])
+        span = (self.WINDOW_SIZE - 1) / self.TRAIN_FPS
+        if times[-1] - times[0] < span:
+            return None
+        feats = np.array([f for _, f in self.feature_buffer])
+        target = times[-1] - span + np.arange(self.WINDOW_SIZE) / self.TRAIN_FPS
+        return np.stack([np.interp(target, times, feats[:, j]) for j in range(feats.shape[1])], axis=1)
 
     def run(self):
         print("AI Processor Thread started.")
@@ -97,7 +116,7 @@ class AIProcessor(threading.Thread):
                 legs_visible = hips_visible and ankles_visible
 
                 if not legs_visible:
-                    current_label = 0
+                    current_label = None
                     avg_speed = 0.0
                     # A janela precisa de frames consecutivos: descarta a sequência interrompida
                     self.feature_buffer.clear()
@@ -114,7 +133,7 @@ class AIProcessor(threading.Thread):
                         dt = curr_time - self.prev_time
                         self.prev_time = curr_time
 
-                        # Use the core engine to get ref_dist (hip width)
+                        # Use the core engine to get ref_dist (torso length)
                         f_list, ref_dist = PoseEngine.extract_polar_features(pts)
 
                         curr_ankles = np.array([pts[15], pts[16]])
@@ -128,35 +147,35 @@ class AIProcessor(threading.Thread):
                         avg_speed = np.mean(self.speed_buffer) if self.speed_buffer else 0
 
                         # --- POSE FEATURES ---
-                        self.feature_buffer.append(f_list)
+                        self.feature_buffer.append((curr_time, f_list))
 
-                        if len(self.feature_buffer) == self.WINDOW_SIZE:
-                            window = np.array(self.feature_buffer).reshape(1, self.WINDOW_SIZE, -1)
-                            window_res = window.reshape(-1, window.shape[-1])
-                            scaled = self.scaler.transform(window_res).reshape(1, self.WINDOW_SIZE, -1)
-                            prob = self.kick_model(scaled, training=False).numpy()[0][0]
+                        window = self._resampled_window()
+                        if window is not None:
+                            scaled = self.scaler.transform(window).reshape(1, self.WINDOW_SIZE, -1)
+                            prob = self.predict_fn(tf.constant(scaled, tf.float32)).numpy()[0][0]
+                            # O modelo responde "o último frame é um chute?": sem votação entre frames,
+                            # que atrasava a detecção. Ele já liga e desliga junto com o chute.
                             current_label = 1 if prob > 0.5 else 0
                         else:
-                            current_label = 0
+                            current_label = None
                     except Exception as e:
                         print(f"AI Error: {e}")
-                        current_label = 0
+                        current_label = None
                         avg_speed = 0
-
-                self.prediction_buffer.append(current_label)
-
-                with self.lock:
-                    self.current_speed = avg_speed
+            else:
+                current_label = None
+                avg_speed = 0.0
+                self.feature_buffer.clear()
+                self.prev_ankles = None
 
             with self.lock:
-                if len(self.prediction_buffer) > 0:
-                    vote_score = sum(self.prediction_buffer) / len(self.prediction_buffer)
-                    if vote_score > 0.6:
-                        self.current_status, self.current_color = "KICKING!", (0, 255, 0)
-                    else:
-                        self.current_status, self.current_color = "NO KICK", (0, 0, 255)
-                else:
+                self.current_speed = avg_speed
+                if current_label is None:
                     self.current_status, self.current_color = "Analyzing...", (255, 255, 255)
+                elif current_label == 1:
+                    self.current_status, self.current_color = "KICKING!", (0, 255, 0)
+                else:
+                    self.current_status, self.current_color = "NO KICK", (0, 0, 255)
 
 # ==========================================
 # 3. MAIN EXECUTION
