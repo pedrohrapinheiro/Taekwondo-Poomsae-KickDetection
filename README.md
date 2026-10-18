@@ -60,6 +60,16 @@ pip install -r requirements.txt
 python Taekwondo_Kick_Pose_Predict/predict_realtime.py
 ```
 
+## 🖥️ Desktop App (Taekwondo Trainer)
+All features in one window. Double-click **`run_app.bat`** or run:
+```powershell
+python Taekwondo_App/app.py
+```
+- **Kick Detection** — live webcam with skeleton overlay, KICKING/NO KICK status, kick counter and kick speed.
+- **Poomsae Evaluation** — open a video or record one with the webcam (5 s countdown), choose the Taegeuk or let it auto-detect, then see the overall score, a per-move table with corrections, and the feedback video with the reference "ghost". Click a move to jump to it.
+
+Recordings and feedback videos are saved in `Taekwondo_App/output/`.
+
 ## 🔬 Methodology
 The system follows a sophisticated pipeline to ensure accuracy:
 1. **Normalization**: All keypoints are translated relative to the hip center to ensure the model works regardless of the person's position in the frame.

@@ -1,3 +1,7 @@
 # Dataset bruto de referência do Poomsae (~273 MB). Os keypoints extraídos ficam em
 # Taekwondo_Poomsae_Evaluator/references/ e são versionados.
 Taekwondo_Poomsae_Evaluator/reference_data/
+
+# Gravações e vídeos de feedback gerados pelo app
+Taekwondo_App/output/
+__pycache__/

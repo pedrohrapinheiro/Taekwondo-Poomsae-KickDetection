@@ -13,40 +13,11 @@ import sys
 # Adicionar a raiz do projeto ao path para importar o core
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from core.pose_engine import PoseEngine, PoseDetector
+from core.camera import VideoStream
 
 # Silenciar avisos do TensorFlow e sklearn
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings("ignore", category=UserWarning)
-
-# ==========================================
-# 0. VIDEO STREAM THREADING
-# ==========================================
-class VideoStream:
-    def __init__(self, src=0):
-        self.stream = cv.VideoCapture(src)
-        (self.grabbed, self.frame) = self.stream.read()
-        self.frame_id = 0
-        self.stopped = False
-
-    def start(self):
-        self.T = threading.Thread(target=self.update, args=(), daemon=True)
-        self.T.start()
-        return self
-
-    def update(self):
-        while not self.stopped:
-            (self.grabbed, self.frame) = self.stream.read()
-            self.frame_id += 1
-
-    def read(self):
-        return self.frame
-
-    def read_with_id(self):
-        return self.frame, self.frame_id
-
-    def stop(self):
-        self.stopped = True
-        self.stream.release()
 
 # ==========================================
 # 2. AI PROCESSOR THREAD
@@ -83,6 +54,7 @@ class AIProcessor(threading.Thread):
         self.current_color = (255, 255, 255)
         self.current_speed = 0.0
         self.current_label = None  # None = janela ainda incompleta
+        self.current_pose = None   # (xy, conf) da última detecção, para desenhar o esqueleto
         self.last_frame_id = -1
         self.stopped = False
 
@@ -107,6 +79,8 @@ class AIProcessor(threading.Thread):
             self.last_frame_id = frame_id
 
             detection = self.detector.detect(frame)
+            with self.lock:
+                self.current_pose = detection
 
             if detection is not None:
                 xy, conf = detection
@@ -170,6 +144,7 @@ class AIProcessor(threading.Thread):
 
             with self.lock:
                 self.current_speed = avg_speed
+                self.current_label = current_label
                 if current_label is None:
                     self.current_status, self.current_color = "Analyzing...", (255, 255, 255)
                 elif current_label == 1:
@@ -180,35 +155,50 @@ class AIProcessor(threading.Thread):
 # ==========================================
 # 3. MAIN EXECUTION
 # ==========================================
-print("Loading models... please wait.")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-pose_model = YOLO(os.path.join(SCRIPT_DIR, "yolov8n-pose.pt"))
-kick_model = tf.keras.models.load_model(os.path.join(SCRIPT_DIR, "model", "kick_detection_model.h5"))
-scaler = joblib.load(os.path.join(SCRIPT_DIR, "model", "scaler.pkl"))
 
-vs = VideoStream(src=0).start()
-ai_thread = AIProcessor(vs, pose_model, kick_model, scaler)
-ai_thread.start()
 
-print("System Ready! Press 'q' to quit.")
+def load_models():
+    """Carrega (pose_model, kick_model, scaler). Também usado pelo app (Taekwondo_App)."""
+    pose_model = YOLO(os.path.join(SCRIPT_DIR, "yolov8n-pose.pt"))
+    kick_model = tf.keras.models.load_model(os.path.join(SCRIPT_DIR, "model", "kick_detection_model.h5"), compile=False)
+    scaler = joblib.load(os.path.join(SCRIPT_DIR, "model", "scaler.pkl"))
+    return pose_model, kick_model, scaler
 
-while True:
-    frame = vs.read()
-    if frame is None: break
 
-    with ai_thread.lock:
-        text = ai_thread.current_status
-        color = ai_thread.current_color
-        speed = ai_thread.current_speed
+def main():
+    print("Loading models... please wait.")
+    pose_model, kick_model, scaler = load_models()
 
-    cv.putText(frame, f"Status: {text}", (20, 40), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-    cv.putText(frame, f"Speed: {speed:.2f} units/s", (20, 70), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    vs = VideoStream(src=0).start()
+    ai_thread = AIProcessor(vs, pose_model, kick_model, scaler)
+    ai_thread.start()
 
-    cv.imshow('Taekwondo Kick Detection - Polar LSTM', frame)
+    print("System Ready! Press 'q' to quit.")
 
-    if cv.waitKey(1) & 0xFF == ord('q'):
-        break
+    while True:
+        frame = vs.read()
+        if frame is None: break
+        frame = frame.copy()
 
-ai_thread.stopped = True
-vs.stop()
-cv.destroyAllWindows()
+        with ai_thread.lock:
+            text = ai_thread.current_status
+            color = ai_thread.current_color
+            speed = ai_thread.current_speed
+
+        cv.putText(frame, f"Status: {text}", (20, 40), cv.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+        cv.putText(frame, f"Speed: {speed:.2f} units/s", (20, 70), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        cv.imshow('Taekwondo Kick Detection - Polar LSTM', frame)
+
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    ai_thread.stopped = True
+    ai_thread.join(timeout=2.0)
+    vs.stop()
+    cv.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

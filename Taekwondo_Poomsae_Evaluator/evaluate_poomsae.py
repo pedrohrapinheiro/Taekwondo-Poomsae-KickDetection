@@ -41,6 +41,13 @@ def put_label(frame, text, y, scale, color):
     cv.putText(frame, text, (18, y), font, 0.7 * scale, color, thick, cv.LINE_AA)
 
 
+def move_notes(m):
+    """Texto de observações de um movimento (usado no terminal e no app)."""
+    if m['comments']:
+        return "; ".join(m['comments'])
+    return "" if m['score'] >= 70 else f"check {m['worst_joint'].replace('_', ' ')}"
+
+
 def fmt_time(seconds):
     return f"{int(seconds // 60)}:{seconds % 60:04.1f}"
 
@@ -60,7 +67,7 @@ def print_report(report):
     print(f"{'Move':>4}  {'Time in video':<15} {'Score':>5}  Notes")
     for m in report['moves']:
         span = f"{fmt_time(m['user_start_s'])}-{fmt_time(m['user_end_s'])}"
-        notes = "; ".join(m['comments']) if m['comments'] else ("" if m['score'] >= 70 else f"check {m['worst_joint'].replace('_', ' ')}")
+        notes = move_notes(m)
         print(f"{m['move']:>4}  {span:<15} {m['score']:>5.0f}  {notes}")
     worst = [m for m in sorted(report['moves'], key=lambda m: m['score']) if m['score'] < 70][:3]
     if worst:
@@ -70,11 +77,12 @@ def print_report(report):
         for c in report['form_ranking'][1:4]))
 
 
-def render_video(video_path, output_path, report, match):
+def render_video(video_path, output_path, report, match, on_progress=None):
     """Vídeo do usuário com o esqueleto dele (verde/vermelho) e o 'fantasma' da referência (branco)."""
     cap = cv.VideoCapture(video_path)
     fps = cap.get(cv.CAP_PROP_FPS) or 30.0
     w, h = int(cap.get(cv.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
     writer = cv.VideoWriter(output_path, cv.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
     ref = match['ref']
@@ -126,6 +134,8 @@ def render_video(video_path, output_path, report, match):
         put_label(frame, status, int(40 * scale), scale, (255, 255, 0))
         writer.write(frame)
         frame_idx += 1
+        if on_progress and frame_idx % 30 == 0:
+            on_progress(frame_idx, total)
     cap.release()
     writer.release()
 
