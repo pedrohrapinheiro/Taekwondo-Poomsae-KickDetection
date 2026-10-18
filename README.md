@@ -66,3 +66,23 @@ The system follows a sophisticated pipeline to ensure accuracy:
 2. **Feature Extraction**: Calculates joint angles (knees/hips) and foot distances to capture the physics of a kick.
 3. **Temporal Windowing**: Instead of analyzing a single frame, the model looks at a window of 30 frames, allowing it to recognize the *motion* of the kick.
 4. **Strict Visibility Filter**: Only predicts when key points (Hips and Ankles) are clearly visible to prevent false positives.
+
+## 🥋 Poomsae Evaluator (Taegeuk 1–8)
+Scores how correctly a Taegeuk poomsae is performed in a video by comparing it with a reference performance.
+
+```powershell
+python Taekwondo_Poomsae_Evaluator/evaluate_poomsae.py my_poomsae.mp4 --output-video feedback.mp4
+```
+
+- **Automatic form and camera detection**: identifies which Taegeuk (1–8) is performed and whether it was filmed from the front or the side.
+- **Per-move score (0–100)** with corrections such as `right forearm is 45° off — raise it`, plus rhythm warnings (`too fast`/`too slow`).
+- **Annotated video**: your skeleton (green, red where it deviates) with the reference pose overlaid as a white "ghost".
+- Options: `--form N` and `--view frontal|lateral` to skip auto-detection, `--json report.json` to save the full report.
+
+**Recording tips:** keep the camera still, film the whole body, and place the camera like the reference — facing the starting direction of the form (frontal) or from the side (lateral). Stance depth is only visible from the side.
+
+**How it works:** poses are extracted with the same distance-invariant `PoseDetector` used for kick detection, normalized by hip center and torso length, and aligned to the reference with subsequence Dynamic Time Warping (so pauses before/after and a different tempo don't matter). The reference is split into moves at the pauses between techniques; each move is scored by its three worst-matching joints, and the final phase of each move is compared limb by limb for the corrections.
+
+**Reference data:** `Taekwondo_Poomsae_Evaluator/references/` holds keypoints extracted from a dual-view (frontal/lateral) Taegeuk 1–8 dataset. To rebuild them, extract the dataset's `Data.zip` into `Taekwondo_Poomsae_Evaluator/reference_data/` and run `python Taekwondo_Poomsae_Evaluator/build_references.py`.
+
+**Limitations:** there is a single reference performer per form, so body proportions and personal style differences also cost a few points; the scores are best used to find the moves that need work rather than as an official grade.

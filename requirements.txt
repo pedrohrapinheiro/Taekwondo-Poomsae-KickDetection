@@ -7,6 +7,7 @@ cvzone
 pandas
 numpy
 scikit-learn
+scipy
 joblib
 
 # Deep Learning
